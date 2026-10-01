@@ -151,7 +151,7 @@ export const customerAgent = {
 
       const promptText = isNavTip
         ? `The user is a customer on the COOP HUB Customer Portal on route '${route}'. ${ctxSummary}\n${routeInfo?.tipPrompt || ''} ${subServiceContext}\nGive a concise 1-2 sentence friendly tip in ${langName}.`
-        : `You are CoopBot, the helpful 24/7 AI Service Assistant for COOP HUB customer home services in Chennai.\n${ctxSummary}\n${subServiceContext}\nThe customer is currently on '${route}' and asks: "${query}". Provide a helpful, clear, and structured response in ${langName}. Mention the exact sub-service rate (₹), cooperative technician guarantee, and direct booking availability.`;
+        : `You are CoopBot, the helpful 24/7 AI Service Assistant for COOP HUB customer home services in Chennai.\n${ctxSummary}\n${subServiceContext}\nThe customer is currently on '${route}' and asks: "${query}". Provide a helpful, clear, and structured response in ${langName}. Mention the exact sub-service rate (₹), cooperative technician guarantee, and direct booking availability. Keep the response concise and actionable (2-4 sentences or short points).`;
 
       const aiResponse = await callPillarAiApi({
         prompt: promptText,

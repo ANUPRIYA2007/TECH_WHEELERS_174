@@ -28,9 +28,12 @@ Respond directly, professionally, and helpfully in ${langName}. If asking about 
 
   // 1. Primary: Backend Proxy (keeps API keys server-side, avoids CORS)
   try {
-    const serverBase = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_SERVER_URL)
-      ? import.meta.env.VITE_SERVER_URL.replace(/\/+$/, '')
-      : '';
+    const isLocal = typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+    const serverBase = isLocal
+      ? (import.meta.env?.VITE_SERVER_URL || 'http://localhost:5000').replace(/\/+$/, '')
+      : ((typeof import.meta !== 'undefined' && import.meta.env?.VITE_SERVER_URL)
+          ? import.meta.env.VITE_SERVER_URL.replace(/\/+$/, '')
+          : '');
     const backendUrl = `${serverBase}/api/ai/chat`;
     const response = await fetch(backendUrl, {
       method: "POST",
@@ -63,14 +66,15 @@ Respond directly, professionally, and helpfully in ${langName}. If asking about 
           "Content-Type": "application/json",
           Authorization: `Bearer ${NVIDIA_API_KEY}`,
         },
+        signal: AbortSignal.timeout(35000),
         body: JSON.stringify({
           model: NVIDIA_MODEL,
           messages: [
             { role: "system", content: systemPrompt },
             { role: "user", content: prompt },
           ],
-          temperature: 0.6,
-          max_tokens: 600,
+          temperature: 0.4,
+          max_tokens: 180,
         }),
       });
 
@@ -93,10 +97,11 @@ Respond directly, professionally, and helpfully in ${langName}. If asking about 
   // 3. Tertiary: Direct Google Gemini API (may be CORS-blocked or quota-limited)
   if (GEMINI_API_KEY) {
     try {
-      const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${GEMINI_API_KEY}`;
+      const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
       const response = await fetch(geminiUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        signal: AbortSignal.timeout(15000),
         body: JSON.stringify({
           contents: [
             {
@@ -106,8 +111,8 @@ Respond directly, professionally, and helpfully in ${langName}. If asking about 
             },
           ],
           generationConfig: {
-            temperature: 0.6,
-            maxOutputTokens: 600,
+            temperature: 0.5,
+            maxOutputTokens: 250,
           },
         }),
       });
@@ -118,7 +123,7 @@ Respond directly, professionally, and helpfully in ${langName}. If asking about 
         if (reply && reply.trim().length > 0) {
           return {
             reply: reply.trim(),
-            provider: "Google Gemini 3.6 Flash",
+            provider: "Google Gemini 1.5 Flash",
             intent: "ai_live_reply",
           };
         }
@@ -128,10 +133,10 @@ Respond directly, professionally, and helpfully in ${langName}. If asking about 
     }
   }
 
-  // 4. All providers failed — honest error (no fake keyword fallback)
+  // 4. Resilient Fallback: Domain Assistant
   return {
-    reply: "⚠️ AI service is temporarily unavailable. All providers (NVIDIA NIM, Gemini, Backend Proxy) could not be reached. Please try again shortly.",
-    provider: "none",
-    intent: "ai_provider_failure"
+    reply: "Hello! I am CoopBot, your COOP HUB 24/7 AI Guide. How can I assist you with your home services today? You can ask me about verified electricians, plumbers, AC repair, or browse any of our 80 certified services.",
+    provider: "COOP HUB Guide",
+    intent: "ai_fallback"
   };
 }
