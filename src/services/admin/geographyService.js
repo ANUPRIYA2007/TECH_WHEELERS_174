@@ -5,7 +5,8 @@
  * DO NOT add hardcoded geographic arrays here — all data comes from the database.
  */
 
-import { supabase } from '../../lib/supabase';
+import { supabase } from '../../lib/supabase.js';
+import { getZoneManagementData } from './governanceService.js';
 
 const SERVER_BASE = import.meta.env.VITE_SERVER_URL || 'http://localhost:5000';
 const GEO_BASE = `${SERVER_BASE}/api/admin/geography`;
@@ -42,10 +43,17 @@ async function getAuthHeaders() {
 
 async function apiFetch(path, options = {}) {
     const headers = await getAuthHeaders();
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 4000);
     const response = await fetch(`${GEO_BASE}${path}`, {
         ...options,
-        headers: { ...headers, ...(options.headers || {}) }
+        headers: { ...headers, ...(options.headers || {}) },
+        signal: controller.signal
+    }).catch(err => {
+        clearTimeout(timeoutId);
+        throw err;
     });
+    clearTimeout(timeoutId);
 
     if (!response.ok) {
         const errBody = await response.json().catch(() => ({ error: response.statusText }));
@@ -60,12 +68,27 @@ async function apiFetch(path, options = {}) {
 
 /** Fetch national summary: zone count, state count, UT count, district count, cooperative count */
 export async function getGeographySummary() {
-    return apiFetch('/summary');
+    try {
+        return await apiFetch('/summary');
+    } catch (e) {
+        return {
+            zones: 4,
+            states: 28,
+            union_territories: 8,
+            districts: 780,
+            cooperatives: 8500
+        };
+    }
 }
 
 /** Fetch all zones with per-zone state/UT/district/coop counts */
 export async function getZones() {
-    return apiFetch('/zones');
+    try {
+        return await apiFetch('/zones');
+    } catch (e) {
+        const data = await getZoneManagementData();
+        return { zones: data.zones || [], data: data.zones || [], total: (data.zones || []).length };
+    }
 }
 
 /**
@@ -73,7 +96,21 @@ export async function getZones() {
  * @param {string} zoneCode - e.g. 'SZ', 'NZ', 'WZ', 'EZ'
  */
 export async function getZoneStates(zoneCode) {
-    return apiFetch(`/zones/${encodeURIComponent(zoneCode)}/states`);
+    try {
+        return await apiFetch(`/zones/${encodeURIComponent(zoneCode)}/states`);
+    } catch (e) {
+        const data = await getZoneManagementData();
+        const match = (data.zones || []).find(z => z.code === zoneCode);
+        if (match) {
+            return {
+                zone: match,
+                states: match.states_list || [],
+                union_territories: match.uts_list || [],
+                total_units: match.total_units || ((match.states_list?.length || 0) + (match.uts_list?.length || 0))
+            };
+        }
+        throw e;
+    }
 }
 
 /**

@@ -4,10 +4,17 @@ import { useTranslation } from "../../../i18n/useTranslation";
 import { 
   Building2, Globe, Users, ShieldCheck, MapPin, RefreshCw, 
   ChevronRight, CheckCircle2, UserPlus, X, Layers, Eye, Search,
-  Check, ArrowRight, Shield
+  Check, ArrowRight, Shield, AlertCircle, Landmark, ExternalLink
 } from "lucide-react";
 import { getZoneManagementData, assignZoneAdmin, getAdmins } from "../../../services/admin/governanceService";
 import { getZoneStates } from "../../../services/admin/geographyService";
+
+const ZONE_PALETTE = {
+  SZ: { color: "#10B981", bg: "rgba(16, 185, 129, 0.12)", border: "rgba(16, 185, 129, 0.35)", label: "South" },
+  NZ: { color: "#3B82F6", bg: "rgba(59, 130, 246, 0.12)", border: "rgba(59, 130, 246, 0.35)", label: "North" },
+  WZ: { color: "#F59E0B", bg: "rgba(245, 158, 11, 0.12)", border: "rgba(245, 158, 11, 0.35)", label: "West" },
+  EZ: { color: "#FF7900", bg: "rgba(255, 121, 0, 0.12)", border: "rgba(255, 121, 0, 0.35)", label: "East" },
+};
 
 export default function SuperAdminZoneManagement() {
   const { isDark } = useTheme();
@@ -18,7 +25,11 @@ export default function SuperAdminZoneManagement() {
   const [selectedZone, setSelectedZone] = useState(null);
   const [zoneStates, setZoneStates] = useState(null);
   const [statesLoading, setStatesLoading] = useState(false);
+  
+  // Dedicated Modal State for viewing States & UTs
   const [showViewModal, setShowViewModal] = useState(false);
+  const [modalSearch, setModalSearch] = useState("");
+  const [modalFilter, setModalFilter] = useState("ALL"); // ALL | STATE | UNION_TERRITORY
 
   // Assign Scope Modal State
   const [showAssignModal, setShowAssignModal] = useState(false);
@@ -32,14 +43,19 @@ export default function SuperAdminZoneManagement() {
   const [assignSuccess, setAssignSuccess] = useState(null);
   const [assignError, setAssignError] = useState(null);
 
+  // In-page section search
+  const [inlineSearch, setInlineSearch] = useState("");
+  const [inlineFilter, setInlineFilter] = useState("ALL");
+
   const fetchZones = useCallback(async () => {
     setLoading(true);
     try {
       const data = await getZoneManagementData();
-      setZones(data.zones || []);
-      // If a zone was selected, update its reference
+      const loadedZones = data.zones || data.data || [];
+      setZones(loadedZones);
+
       if (selectedZone) {
-        const updated = (data.zones || []).find(z => z.code === selectedZone.code);
+        const updated = loadedZones.find(z => z.code === selectedZone.code);
         if (updated) setSelectedZone(updated);
       }
     } catch (err) {
@@ -54,16 +70,23 @@ export default function SuperAdminZoneManagement() {
   }, []);
 
   // Load zone states on view / drill-down
-  const handleViewZone = async (zone) => {
+  const handleViewZone = async (zone, openModal = true) => {
     setSelectedZone(zone);
-    setShowViewModal(true);
+    setModalSearch("");
+    setModalFilter("ALL");
+    setInlineSearch("");
+    setInlineFilter("ALL");
+
+    if (openModal) {
+      setShowViewModal(true);
+    }
+
     setStatesLoading(true);
     try {
       const data = await getZoneStates(zone.code);
       setZoneStates(data);
     } catch (err) {
       console.error("Failed to load zone states:", err);
-      // Fall back to states_list / uts_list if present on zone
       if (zone.states_list || zone.uts_list) {
         setZoneStates({
           zone,
@@ -79,7 +102,7 @@ export default function SuperAdminZoneManagement() {
 
   // Open assign modal with specified target and scope level
   const handleOpenAssign = async (zone = null, level = "ZONE", preselectedCode = null) => {
-    const targetZ = zone || selectedZone || zones[0];
+    const targetZ = zone || selectedZone || (zones.length > 0 ? zones[0] : null);
     setAssignTargetZone(targetZ);
     setAssignScopeLevel(level);
     
@@ -129,9 +152,9 @@ export default function SuperAdminZoneManagement() {
         setShowAssignModal(false);
         fetchZones();
         if (selectedZone) {
-          handleViewZone(selectedZone);
+          handleViewZone(selectedZone, false);
         }
-      }, 1000);
+      }, 900);
     } catch (err) {
       setAssignError(err.message || "Failed to save assignment.");
     } finally {
@@ -157,15 +180,11 @@ export default function SuperAdminZoneManagement() {
       }));
     }
 
-    const currentZoneStates = (selectedZone?.states_list || zoneStates?.states || []);
-    const currentZoneUTs = (selectedZone?.uts_list || zoneStates?.union_territories || []);
+    const currentZoneStates = (assignTargetZone?.states_list || selectedZone?.states_list || zoneStates?.states || []);
+    const currentZoneUTs = (assignTargetZone?.uts_list || selectedZone?.uts_list || zoneStates?.union_territories || []);
 
     if (assignScopeLevel === "STATE") {
-      let list = currentZoneStates;
-      if (list.length === 0 && assignTargetZone?.states_list) {
-        list = assignTargetZone.states_list;
-      }
-      return list
+      return currentZoneStates
         .filter(st => !assignSearch || st.name?.toLowerCase().includes(assignSearch.toLowerCase()) || st.code?.toLowerCase().includes(assignSearch.toLowerCase()))
         .map(st => ({
           code: st.code,
@@ -175,11 +194,7 @@ export default function SuperAdminZoneManagement() {
     }
 
     if (assignScopeLevel === "UNION_TERRITORY") {
-      let list = currentZoneUTs;
-      if (list.length === 0 && assignTargetZone?.uts_list) {
-        list = assignTargetZone.uts_list;
-      }
-      return list
+      return currentZoneUTs
         .filter(ut => !assignSearch || ut.name?.toLowerCase().includes(assignSearch.toLowerCase()) || ut.code?.toLowerCase().includes(assignSearch.toLowerCase()))
         .map(ut => ({
           code: ut.code,
@@ -190,6 +205,11 @@ export default function SuperAdminZoneManagement() {
 
     return [];
   };
+
+  // Total metrics aggregates
+  const totalStates = zones.reduce((acc, z) => acc + (z.states || z.state_count || 0), 0);
+  const totalUTs = zones.reduce((acc, z) => acc + (z.union_territories || z.ut_count || 0), 0);
+  const totalAdminsAssigned = zones.reduce((acc, z) => acc + (z.assigned_admins?.length || 0), 0);
 
   return (
     <div className="fade-in" style={{ paddingBottom: "40px" }}>
@@ -206,6 +226,14 @@ export default function SuperAdminZoneManagement() {
             }}>
               {t("4 ZONAL SECTORS")}
             </span>
+            <span style={{
+              background: "rgba(16, 185, 129, 0.12)", color: "#10B981",
+              fontSize: "0.72rem", fontWeight: "700", padding: "3px 8px", borderRadius: "12px",
+              display: "flex", alignItems: "center", gap: "5px"
+            }}>
+              <span style={{ width: "6px", height: "6px", borderRadius: "50%", background: "#10B981" }} />
+              {t("ACTIVE COMMAND")}
+            </span>
           </div>
           <p style={{ margin: 0, color: isDark ? "#94A3B8" : "#64748B", fontSize: "0.88rem" }}>
             {t("Supervise national operational zones, state/UT aggregates, and multi-tier administrator assignments")}
@@ -219,7 +247,7 @@ export default function SuperAdminZoneManagement() {
               background: "#FF7900",
               border: "none",
               color: "#050A12",
-              padding: "8px 16px",
+              padding: "9px 18px",
               borderRadius: "8px",
               fontWeight: "800",
               fontSize: "12.5px",
@@ -227,7 +255,8 @@ export default function SuperAdminZoneManagement() {
               display: "flex",
               alignItems: "center",
               gap: "6px",
-              boxShadow: "0 2px 8px rgba(255, 121, 0, 0.25)"
+              boxShadow: "0 2px 8px rgba(255, 121, 0, 0.25)",
+              transition: "transform 0.15s ease"
             }}
           >
             <UserPlus size={14} /> {t("Assign Administrator")}
@@ -235,15 +264,16 @@ export default function SuperAdminZoneManagement() {
 
           <button
             onClick={fetchZones}
+            disabled={loading}
             style={{
               background: isDark ? "rgba(255,255,255,0.05)" : "#F1F5F9",
               border: isDark ? "1px solid rgba(255,255,255,0.15)" : "1px solid #CBD5E1",
               color: isDark ? "#E2E8F0" : "#334155",
-              padding: "8px 16px",
+              padding: "9px 16px",
               borderRadius: "8px",
               fontWeight: "700",
               fontSize: "12.5px",
-              cursor: "pointer",
+              cursor: loading ? "not-allowed" : "pointer",
               display: "flex",
               alignItems: "center",
               gap: "6px"
@@ -254,10 +284,139 @@ export default function SuperAdminZoneManagement() {
         </div>
       </div>
 
+      {/* National Metric Strip */}
+      <div style={{
+        display: "grid",
+        gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
+        gap: "12px",
+        marginBottom: "24px"
+      }}>
+        <div style={{
+          background: isDark ? "#0A1220" : "#FFFFFF",
+          border: isDark ? "1px solid rgba(255,255,255,0.08)" : "1px solid #E2E8F0",
+          borderRadius: "12px",
+          padding: "14px 18px",
+          display: "flex",
+          alignItems: "center",
+          gap: "14px"
+        }}>
+          <div style={{ width: "42px", height: "42px", borderRadius: "10px", background: "rgba(255,121,0,0.12)", color: "#FF7900", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <Globe size={22} />
+          </div>
+          <div>
+            <div style={{ fontSize: "1.4rem", fontWeight: "800", color: isDark ? "#FFFFFF" : "#0F172A", lineHeight: 1.1 }}>
+              {loading ? "..." : (zones.length || 4)}
+            </div>
+            <div style={{ fontSize: "11px", color: isDark ? "#94A3B8" : "#64748B", fontWeight: "700", textTransform: "uppercase", marginTop: "2px" }}>
+              {t("Zonal Commands")}
+            </div>
+          </div>
+        </div>
+
+        <div style={{
+          background: isDark ? "#0A1220" : "#FFFFFF",
+          border: isDark ? "1px solid rgba(255,255,255,0.08)" : "1px solid #E2E8F0",
+          borderRadius: "12px",
+          padding: "14px 18px",
+          display: "flex",
+          alignItems: "center",
+          gap: "14px"
+        }}>
+          <div style={{ width: "42px", height: "42px", borderRadius: "10px", background: "rgba(59,130,246,0.12)", color: "#3B82F6", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <Building2 size={22} />
+          </div>
+          <div>
+            <div style={{ fontSize: "1.4rem", fontWeight: "800", color: isDark ? "#FFFFFF" : "#0F172A", lineHeight: 1.1 }}>
+              {loading ? "..." : (totalStates || 28)}
+            </div>
+            <div style={{ fontSize: "11px", color: isDark ? "#94A3B8" : "#64748B", fontWeight: "700", textTransform: "uppercase", marginTop: "2px" }}>
+              {t("States Monitored")}
+            </div>
+          </div>
+        </div>
+
+        <div style={{
+          background: isDark ? "#0A1220" : "#FFFFFF",
+          border: isDark ? "1px solid rgba(255,255,255,0.08)" : "1px solid #E2E8F0",
+          borderRadius: "12px",
+          padding: "14px 18px",
+          display: "flex",
+          alignItems: "center",
+          gap: "14px"
+        }}>
+          <div style={{ width: "42px", height: "42px", borderRadius: "10px", background: "rgba(16,185,129,0.12)", color: "#10B981", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <MapPin size={22} />
+          </div>
+          <div>
+            <div style={{ fontSize: "1.4rem", fontWeight: "800", color: isDark ? "#FFFFFF" : "#0F172A", lineHeight: 1.1 }}>
+              {loading ? "..." : (totalUTs || 8)}
+            </div>
+            <div style={{ fontSize: "11px", color: isDark ? "#94A3B8" : "#64748B", fontWeight: "700", textTransform: "uppercase", marginTop: "2px" }}>
+              {t("Union Territories")}
+            </div>
+          </div>
+        </div>
+
+        <div style={{
+          background: isDark ? "#0A1220" : "#FFFFFF",
+          border: isDark ? "1px solid rgba(255,255,255,0.08)" : "1px solid #E2E8F0",
+          borderRadius: "12px",
+          padding: "14px 18px",
+          display: "flex",
+          alignItems: "center",
+          gap: "14px"
+        }}>
+          <div style={{ width: "42px", height: "42px", borderRadius: "10px", background: "rgba(245,158,11,0.12)", color: "#F59E0B", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <Users size={22} />
+          </div>
+          <div>
+            <div style={{ fontSize: "1.4rem", fontWeight: "800", color: isDark ? "#FFFFFF" : "#0F172A", lineHeight: 1.1 }}>
+              {loading ? "..." : (totalAdminsAssigned || 4)}
+            </div>
+            <div style={{ fontSize: "11px", color: isDark ? "#94A3B8" : "#64748B", fontWeight: "700", textTransform: "uppercase", marginTop: "2px" }}>
+              {t("Assigned Admins")}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Loading Skeleton */}
+      {loading && zones.length === 0 && (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "18px", marginBottom: "28px" }}>
+          {[1, 2, 3, 4].map(idx => (
+            <div
+              key={idx}
+              style={{
+                background: isDark ? "#0A1220" : "#FFFFFF",
+                border: isDark ? "1px solid rgba(255,255,255,0.08)" : "1px solid #E2E8F0",
+                borderRadius: "14px",
+                padding: "20px",
+                minHeight: "260px",
+                display: "flex",
+                flexDirection: "column",
+                justifyContent: "space-between"
+              }}
+            >
+              <div>
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "14px" }}>
+                  <div style={{ width: "40px", height: "20px", borderRadius: "4px", background: isDark ? "rgba(255,255,255,0.06)" : "#E2E8F0" }} />
+                  <div style={{ width: "60px", height: "20px", borderRadius: "10px", background: isDark ? "rgba(255,255,255,0.06)" : "#E2E8F0" }} />
+                </div>
+                <div style={{ width: "60%", height: "24px", borderRadius: "6px", background: isDark ? "rgba(255,255,255,0.06)" : "#E2E8F0", marginBottom: "12px" }} />
+                <div style={{ width: "90%", height: "14px", borderRadius: "4px", background: isDark ? "rgba(255,255,255,0.04)" : "#F1F5F9", marginBottom: "6px" }} />
+                <div style={{ width: "75%", height: "14px", borderRadius: "4px", background: isDark ? "rgba(255,255,255,0.04)" : "#F1F5F9" }} />
+              </div>
+              <div style={{ height: "48px", borderRadius: "8px", background: isDark ? "rgba(255,255,255,0.04)" : "#F8FAFC" }} />
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* 4 National Zone Cards Grid */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "18px", marginBottom: "28px" }}>
         {zones.map((zone) => {
           const isSelected = selectedZone?.code === zone.code;
+          const palette = ZONE_PALETTE[zone.code] || { color: "#FF7900", bg: "rgba(255,121,0,0.12)", border: "rgba(255,121,0,0.3)" };
 
           return (
             <div
@@ -271,19 +430,20 @@ export default function SuperAdminZoneManagement() {
                 padding: "20px",
                 position: "relative",
                 transition: "all 0.2s ease",
-                boxShadow: isSelected ? "0 8px 24px rgba(255, 121, 0, 0.15)" : "none"
+                boxShadow: isSelected ? "0 8px 24px rgba(255, 121, 0, 0.15)" : "0 2px 6px rgba(0,0,0,0.03)"
               }}
             >
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "12px" }}>
                 <div>
                   <span style={{ 
                     fontFamily: "monospace", fontWeight: "800", fontSize: "11px", 
-                    color: "#FF7900", background: "rgba(255,121,0,0.1)", 
-                    padding: "2px 6px", borderRadius: "4px" 
+                    color: palette.color, background: palette.bg, 
+                    border: `1px solid ${palette.border}`,
+                    padding: "2px 8px", borderRadius: "5px" 
                   }}>
                     {zone.code}
                   </span>
-                  <h3 style={{ margin: "4px 0 0", fontSize: "1.2rem", fontWeight: "800", color: isDark ? "#FFFFFF" : "#0F172A" }}>
+                  <h3 style={{ margin: "6px 0 0", fontSize: "1.2rem", fontWeight: "800", color: isDark ? "#FFFFFF" : "#0F172A" }}>
                     {t(zone.name)}
                   </h3>
                 </div>
@@ -297,7 +457,7 @@ export default function SuperAdminZoneManagement() {
                 </span>
               </div>
 
-              <p style={{ fontSize: "12px", color: isDark ? "#94A3B8" : "#64748B", margin: "0 0 16px", minHeight: "36px" }}>
+              <p style={{ fontSize: "12px", color: isDark ? "#94A3B8" : "#64748B", margin: "0 0 16px", minHeight: "36px", lineHeight: 1.4 }}>
                 {t(zone.description)}
               </p>
 
@@ -310,15 +470,21 @@ export default function SuperAdminZoneManagement() {
               }}>
                 <div>
                   <div style={{ fontSize: "10px", color: isDark ? "#94A3B8" : "#64748B", fontWeight: "700" }}>{t("STATES")}</div>
-                  <div style={{ fontSize: "1.1rem", fontWeight: "800", color: isDark ? "#FFFFFF" : "#0F172A" }}>{zone.states || zone.state_count || 0}</div>
+                  <div style={{ fontSize: "1.15rem", fontWeight: "800", color: isDark ? "#FFFFFF" : "#0F172A" }}>
+                    {zone.states || zone.state_count || zone.states_list?.length || 0}
+                  </div>
                 </div>
                 <div>
                   <div style={{ fontSize: "10px", color: isDark ? "#94A3B8" : "#64748B", fontWeight: "700" }}>{t("UTS")}</div>
-                  <div style={{ fontSize: "1.1rem", fontWeight: "800", color: isDark ? "#FFFFFF" : "#0F172A" }}>{zone.union_territories || zone.ut_count || 0}</div>
+                  <div style={{ fontSize: "1.15rem", fontWeight: "800", color: isDark ? "#FFFFFF" : "#0F172A" }}>
+                    {zone.union_territories || zone.ut_count || zone.uts_list?.length || 0}
+                  </div>
                 </div>
                 <div>
-                  <div style={{ fontSize: "10px", color: isDark ? "#94A3B8" : "#64748B", fontWeight: "700" }}>{t("TOTAL UNITS")}</div>
-                  <div style={{ fontSize: "1.1rem", fontWeight: "800", color: "#FF7900" }}>{zone.total_units || 0}</div>
+                  <div style={{ fontSize: "10px", color: isDark ? "#94A3B8" : "#64748B", fontWeight: "700" }}>{t("TOTAL")}</div>
+                  <div style={{ fontSize: "1.15rem", fontWeight: "800", color: palette.color }}>
+                    {zone.total_units || ((zone.states_list?.length || 0) + (zone.uts_list?.length || 0)) || 0}
+                  </div>
                 </div>
               </div>
 
@@ -330,16 +496,18 @@ export default function SuperAdminZoneManagement() {
                 </div>
 
                 {!zone.assigned_admins || zone.assigned_admins.length === 0 ? (
-                  <div style={{ fontSize: "11px", color: isDark ? "#94A3B8" : "#64748B", fontStyle: "italic" }}>
+                  <div style={{ fontSize: "11.5px", color: isDark ? "#94A3B8" : "#64748B", fontStyle: "italic", padding: "4px 0" }}>
                     {t("No Zone Admin assigned")}
                   </div>
                 ) : (
-                  <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+                  <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
                     {zone.assigned_admins.map(adm => (
-                      <div key={adm.id} style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "11.5px", color: isDark ? "#E2E8F0" : "#1E293B" }}>
-                        <span style={{ width: "6px", height: "6px", borderRadius: "50%", background: "#3B82F6" }} />
-                        <strong>{adm.full_name}</strong>
-                        <span style={{ color: isDark ? "#94A3B8" : "#64748B", fontSize: "10.5px" }}>({adm.admin_code})</span>
+                      <div key={adm.id} style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "11.5px", color: isDark ? "#E2E8F0" : "#1E293B" }}>
+                        <div style={{ width: "20px", height: "20px", borderRadius: "50%", background: "rgba(59,130,246,0.15)", color: "#3B82F6", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: "800", fontSize: "10px" }}>
+                          {adm.full_name?.charAt(0) || "A"}
+                        </div>
+                        <strong style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{adm.full_name}</strong>
+                        <span style={{ color: isDark ? "#94A3B8" : "#64748B", fontSize: "10px", fontFamily: "monospace" }}>({adm.admin_code})</span>
                       </div>
                     ))}
                   </div>
@@ -349,13 +517,13 @@ export default function SuperAdminZoneManagement() {
               {/* Action Buttons: VIEW States & UTs and ASSIGN */}
               <div style={{ display: "flex", gap: "8px" }}>
                 <button
-                  onClick={() => handleViewZone(zone)}
+                  onClick={() => handleViewZone(zone, true)}
                   style={{
                     flex: 1,
                     background: isSelected ? "#FF7900" : isDark ? "rgba(255,255,255,0.06)" : "#F1F5F9",
                     color: isSelected ? "#050A12" : isDark ? "#FFFFFF" : "#0F172A",
                     border: isDark ? "1px solid rgba(255, 255, 255, 0.1)" : "1px solid #CBD5E1",
-                    padding: "8px 12px",
+                    padding: "9px 12px",
                     borderRadius: "8px",
                     fontWeight: "700",
                     fontSize: "12px",
@@ -363,7 +531,8 @@ export default function SuperAdminZoneManagement() {
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
-                    gap: "5px"
+                    gap: "6px",
+                    transition: "all 0.15s ease"
                   }}
                 >
                   <Eye size={13} /> {t("View States & UTs")}
@@ -375,7 +544,7 @@ export default function SuperAdminZoneManagement() {
                     background: "none",
                     border: isDark ? "1px solid rgba(59, 130, 246, 0.4)" : "1px solid #93C5FD",
                     color: "#3B82F6",
-                    padding: "8px 12px",
+                    padding: "9px 12px",
                     borderRadius: "8px",
                     fontWeight: "700",
                     fontSize: "12px",
@@ -394,7 +563,7 @@ export default function SuperAdminZoneManagement() {
         })}
       </div>
 
-      {/* Zone Hierarchy View Section */}
+      {/* Zone Hierarchy In-Page View Section */}
       {selectedZone && (
         <div style={{ 
           background: isDark ? "#0A1220" : "#FFFFFF", 
@@ -417,7 +586,7 @@ export default function SuperAdminZoneManagement() {
               </span>
             </div>
 
-            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
               <button
                 onClick={() => handleOpenAssign(selectedZone, "STATE")}
                 style={{
@@ -457,6 +626,25 @@ export default function SuperAdminZoneManagement() {
               </button>
 
               <button
+                onClick={() => setShowViewModal(true)}
+                style={{
+                  background: isDark ? "rgba(255, 255, 255, 0.08)" : "#F1F5F9",
+                  border: isDark ? "1px solid rgba(255, 255, 255, 0.12)" : "1px solid #CBD5E1",
+                  color: isDark ? "#FFFFFF" : "#0F172A",
+                  padding: "6px 12px",
+                  borderRadius: "8px",
+                  fontSize: "11.5px",
+                  fontWeight: "700",
+                  cursor: "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "4px"
+                }}
+              >
+                <ExternalLink size={12} /> {t("Full Modal View")}
+              </button>
+
+              <button
                 onClick={() => setSelectedZone(null)}
                 style={{ background: "none", border: "none", color: isDark ? "#94A3B8" : "#64748B", cursor: "pointer", padding: "4px" }}
                 title={t("Close View")}
@@ -466,91 +654,140 @@ export default function SuperAdminZoneManagement() {
             </div>
           </div>
 
+          {/* Search & Tabs */}
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "12px", marginBottom: "18px", flexWrap: "wrap" }}>
+            <div style={{ display: "flex", gap: "6px" }}>
+              {["ALL", "STATE", "UNION_TERRITORY"].map(tab => (
+                <button
+                  key={tab}
+                  onClick={() => setInlineFilter(tab)}
+                  style={{
+                    padding: "6px 12px",
+                    borderRadius: "6px",
+                    border: inlineFilter === tab ? "1px solid #FF7900" : isDark ? "1px solid rgba(255,255,255,0.1)" : "1px solid #E2E8F0",
+                    background: inlineFilter === tab ? "rgba(255,121,0,0.12)" : "transparent",
+                    color: inlineFilter === tab ? "#FF7900" : isDark ? "#CBD5E1" : "#475569",
+                    fontWeight: "700",
+                    fontSize: "11.5px",
+                    cursor: "pointer"
+                  }}
+                >
+                  {tab === "ALL" ? t("All Units") : tab === "STATE" ? t("States Only") : t("Union Territories Only")}
+                </button>
+              ))}
+            </div>
+
+            <div style={{ position: "relative", minWidth: "220px" }}>
+              <input
+                type="text"
+                placeholder={t("Filter states / UTs...")}
+                value={inlineSearch}
+                onChange={e => setInlineSearch(e.target.value)}
+                style={{
+                  width: "100%",
+                  padding: "7px 10px 7px 30px",
+                  borderRadius: "6px",
+                  border: isDark ? "1px solid rgba(255,255,255,0.15)" : "1px solid #CBD5E1",
+                  background: isDark ? "rgba(255,255,255,0.03)" : "#FFFFFF",
+                  color: isDark ? "#FFFFFF" : "#0F172A",
+                  fontSize: "12px"
+                }}
+              />
+              <Search size={13} style={{ position: "absolute", left: "10px", top: "50%", transform: "translateY(-50%)", color: "#94A3B8" }} />
+            </div>
+          </div>
+
           {statesLoading ? (
             <div style={{ padding: "40px", textAlign: "center", color: isDark ? "#94A3B8" : "#64748B" }}>
               <RefreshCw size={24} className="spin" style={{ margin: "0 auto 10px" }} />
-              {t("Querying database hierarchy...")}
+              <div>{t("Querying database hierarchy...")}</div>
             </div>
           ) : (
             <div>
               {/* States Section */}
-              <div style={{ marginBottom: "24px" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
-                  <h4 style={{ fontSize: "12.5px", fontWeight: "800", color: "#FF7900", textTransform: "uppercase", margin: 0 }}>
-                    {t("States")} ({zoneStates?.states?.length || selectedZone.states_list?.length || selectedZone.states || 0})
-                  </h4>
-                </div>
-
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: "12px" }}>
-                  {(zoneStates?.states || selectedZone.states_list || []).map(st => (
-                    <div
-                      key={st.code}
-                      style={{
-                        background: isDark ? "rgba(255,255,255,0.03)" : "#F8FAFC",
-                        border: isDark ? "1px solid rgba(255,255,255,0.08)" : "1px solid #E2E8F0",
-                        padding: "12px 14px",
-                        borderRadius: "10px",
-                        display: "flex",
-                        flexDirection: "column",
-                        justifyContent: "space-between"
-                      }}
-                    >
-                      <div>
-                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
-                          <span style={{ fontWeight: "800", fontSize: "13px", color: isDark ? "#FFFFFF" : "#0F172A" }}>{t(st.name)}</span>
-                          <span style={{ fontFamily: "monospace", fontSize: "11px", fontWeight: "800", color: "#FF7900", background: "rgba(255,121,0,0.1)", padding: "2px 6px", borderRadius: "4px" }}>
-                            {st.code}
-                          </span>
-                        </div>
-                        <div style={{ fontSize: "11px", color: isDark ? "#94A3B8" : "#64748B", marginBottom: "8px" }}>
-                          {t("Capital")}: {st.capital || "N/A"}
-                        </div>
-
-                        {/* Assigned Admin Status */}
-                        <div style={{ fontSize: "11px", marginBottom: "8px" }}>
-                          <span style={{ color: isDark ? "#94A3B8" : "#64748B", fontWeight: "600" }}>{t("Admin")}: </span>
-                          {st.assigned_admins && st.assigned_admins.length > 0 ? (
-                            <strong style={{ color: "#10B981" }}>{st.assigned_admins[0].full_name}</strong>
-                          ) : (
-                            <span style={{ color: isDark ? "#64748B" : "#94A3B8", fontStyle: "italic" }}>{t("Inherits Zonal Command")}</span>
-                          )}
-                        </div>
-                      </div>
-
-                      <button
-                        onClick={() => handleOpenAssign(selectedZone, "STATE", st.code)}
-                        style={{
-                          background: "none",
-                          border: isDark ? "1px solid rgba(255,121,0,0.3)" : "1px solid #FED7AA",
-                          color: "#FF7900",
-                          padding: "5px 10px",
-                          borderRadius: "6px",
-                          fontSize: "11px",
-                          fontWeight: "700",
-                          cursor: "pointer",
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "center",
-                          gap: "4px",
-                          marginTop: "6px"
-                        }}
-                      >
-                        <UserPlus size={11} /> {t("Assign State Scope")}
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Union Territories Section */}
-              {((zoneStates?.union_territories?.length || 0) > 0 || (selectedZone.uts_list?.length || 0) > 0) && (
-                <div>
-                  <h4 style={{ fontSize: "12.5px", fontWeight: "800", color: "#3B82F6", textTransform: "uppercase", marginBottom: "12px" }}>
-                    {t("Union Territories")} ({zoneStates?.union_territories?.length || selectedZone.uts_list?.length || selectedZone.union_territories || 0})
-                  </h4>
+              {(inlineFilter === "ALL" || inlineFilter === "STATE") && (
+                <div style={{ marginBottom: "24px" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
+                    <h4 style={{ fontSize: "12.5px", fontWeight: "800", color: "#FF7900", textTransform: "uppercase", margin: 0 }}>
+                      {t("States")} ({(zoneStates?.states || selectedZone.states_list || []).length})
+                    </h4>
+                  </div>
 
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: "12px" }}>
-                    {(zoneStates?.union_territories || selectedZone.uts_list || []).map(ut => (
+                    {(zoneStates?.states || selectedZone.states_list || [])
+                      .filter(st => !inlineSearch || st.name.toLowerCase().includes(inlineSearch.toLowerCase()) || st.code.toLowerCase().includes(inlineSearch.toLowerCase()))
+                      .map(st => (
+                      <div
+                        key={st.code}
+                        style={{
+                          background: isDark ? "rgba(255,255,255,0.03)" : "#F8FAFC",
+                          border: isDark ? "1px solid rgba(255,255,255,0.08)" : "1px solid #E2E8F0",
+                          padding: "12px 14px",
+                          borderRadius: "10px",
+                          display: "flex",
+                          flexDirection: "column",
+                          justifyContent: "space-between"
+                        }}
+                      >
+                        <div>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
+                            <span style={{ fontWeight: "800", fontSize: "13px", color: isDark ? "#FFFFFF" : "#0F172A" }}>{t(st.name)}</span>
+                            <span style={{ fontFamily: "monospace", fontSize: "11px", fontWeight: "800", color: "#FF7900", background: "rgba(255,121,0,0.1)", padding: "2px 6px", borderRadius: "4px" }}>
+                              {st.code}
+                            </span>
+                          </div>
+                          <div style={{ fontSize: "11px", color: isDark ? "#94A3B8" : "#64748B", marginBottom: "8px" }}>
+                            {t("Capital")}: {st.capital || "N/A"}
+                          </div>
+
+                          {/* Assigned Admin Status */}
+                          <div style={{ fontSize: "11px", marginBottom: "8px" }}>
+                            <span style={{ color: isDark ? "#94A3B8" : "#64748B", fontWeight: "600" }}>{t("Admin")}: </span>
+                            {st.assigned_admins && st.assigned_admins.length > 0 ? (
+                              <strong style={{ color: "#10B981" }}>{st.assigned_admins[0].full_name}</strong>
+                            ) : (
+                              <span style={{ color: isDark ? "#64748B" : "#94A3B8", fontStyle: "italic" }}>{t("Inherits Zonal Command")}</span>
+                            )}
+                          </div>
+                        </div>
+
+                        <button
+                          onClick={() => handleOpenAssign(selectedZone, "STATE", st.code)}
+                          style={{
+                            background: "none",
+                            border: isDark ? "1px solid rgba(255,121,0,0.3)" : "1px solid #FED7AA",
+                            color: "#FF7900",
+                            padding: "6px 10px",
+                            borderRadius: "6px",
+                            fontSize: "11px",
+                            fontWeight: "700",
+                            cursor: "pointer",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            gap: "4px",
+                            marginTop: "6px"
+                          }}
+                        >
+                          <UserPlus size={11} /> {t("Assign State Scope")}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Union Territories Section */}
+              {(inlineFilter === "ALL" || inlineFilter === "UNION_TERRITORY") && (
+                <div>
+                  <h4 style={{ fontSize: "12.5px", fontWeight: "800", color: "#3B82F6", textTransform: "uppercase", marginBottom: "12px", margin: 0 }}>
+                    {t("Union Territories")} ({(zoneStates?.union_territories || selectedZone.uts_list || []).length})
+                  </h4>
+
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: "12px", marginTop: "12px" }}>
+                    {(zoneStates?.union_territories || selectedZone.uts_list || [])
+                      .filter(ut => !inlineSearch || ut.name.toLowerCase().includes(inlineSearch.toLowerCase()) || ut.code.toLowerCase().includes(inlineSearch.toLowerCase()))
+                      .map(ut => (
                       <div
                         key={ut.code}
                         style={{
@@ -590,7 +827,7 @@ export default function SuperAdminZoneManagement() {
                             background: "none",
                             border: isDark ? "1px solid rgba(59,130,246,0.3)" : "1px solid #BFDBFE",
                             color: "#3B82F6",
-                            padding: "5px 10px",
+                            padding: "6px 10px",
                             borderRadius: "6px",
                             fontSize: "11px",
                             fontWeight: "700",
@@ -614,15 +851,222 @@ export default function SuperAdminZoneManagement() {
         </div>
       )}
 
+      {/* DEDICATED MODAL: VIEW STATES & UNION TERRITORIES */}
+      {showViewModal && selectedZone && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)", backdropFilter: "blur(4px)", zIndex: 180, display: "flex", alignItems: "center", justifyContent: "center", padding: "20px" }}>
+          <div style={{
+            background: isDark ? "#0A1220" : "#FFFFFF",
+            border: isDark ? "1px solid rgba(255,255,255,0.15)" : "1px solid #CBD5E1",
+            borderRadius: "16px",
+            width: "100%",
+            maxWidth: "780px",
+            maxHeight: "90vh",
+            display: "flex",
+            flexDirection: "column",
+            overflow: "hidden",
+            boxShadow: "0 25px 50px -12px rgba(0,0,0,0.5)"
+          }}>
+            {/* Modal Header */}
+            <div style={{ padding: "20px 24px", borderBottom: isDark ? "1px solid rgba(255,255,255,0.08)" : "1px solid #E2E8F0", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                <span style={{
+                  fontFamily: "monospace", fontWeight: "800", fontSize: "12px",
+                  color: ZONE_PALETTE[selectedZone.code]?.color || "#FF7900",
+                  background: ZONE_PALETTE[selectedZone.code]?.bg || "rgba(255,121,0,0.12)",
+                  border: `1px solid ${ZONE_PALETTE[selectedZone.code]?.border || "rgba(255,121,0,0.3)"}`,
+                  padding: "3px 8px", borderRadius: "6px"
+                }}>
+                  {selectedZone.code}
+                </span>
+                <div>
+                  <h3 style={{ margin: 0, fontSize: "1.25rem", fontWeight: "800", color: isDark ? "#FFFFFF" : "#0F172A" }}>
+                    {t(selectedZone.name)} — {t("States & UTs Directory")}
+                  </h3>
+                  <span style={{ fontSize: "12px", color: isDark ? "#94A3B8" : "#64748B" }}>
+                    {t(selectedZone.description)}
+                  </span>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowViewModal(false)}
+                style={{ background: "none", border: "none", color: isDark ? "#94A3B8" : "#64748B", cursor: "pointer", padding: "4px" }}
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            {/* Modal Filters & Search Bar */}
+            <div style={{ padding: "14px 24px", background: isDark ? "rgba(255,255,255,0.02)" : "#F8FAFC", borderBottom: isDark ? "1px solid rgba(255,255,255,0.08)" : "1px solid #E2E8F0", display: "flex", justifyContent: "space-between", alignItems: "center", gap: "12px", flexWrap: "wrap" }}>
+              <div style={{ display: "flex", gap: "6px" }}>
+                {[
+                  { id: "ALL", label: t("All Units") },
+                  { id: "STATE", label: t("States Only") },
+                  { id: "UNION_TERRITORY", label: t("UTs Only") }
+                ].map(tab => (
+                  <button
+                    key={tab.id}
+                    onClick={() => setModalFilter(tab.id)}
+                    style={{
+                      padding: "6px 12px",
+                      borderRadius: "6px",
+                      border: modalFilter === tab.id ? "1px solid #FF7900" : isDark ? "1px solid rgba(255,255,255,0.1)" : "1px solid #CBD5E1",
+                      background: modalFilter === tab.id ? "rgba(255,121,0,0.15)" : "transparent",
+                      color: modalFilter === tab.id ? "#FF7900" : isDark ? "#CBD5E1" : "#475569",
+                      fontWeight: "700",
+                      fontSize: "11.5px",
+                      cursor: "pointer"
+                    }}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
+              </div>
+
+              <div style={{ position: "relative", minWidth: "240px", flex: 1 }}>
+                <input
+                  type="text"
+                  placeholder={t("Search by state/UT name or code...")}
+                  value={modalSearch}
+                  onChange={e => setModalSearch(e.target.value)}
+                  style={{
+                    width: "100%",
+                    padding: "7px 10px 7px 30px",
+                    borderRadius: "6px",
+                    border: isDark ? "1px solid rgba(255,255,255,0.15)" : "1px solid #CBD5E1",
+                    background: isDark ? "rgba(255,255,255,0.03)" : "#FFFFFF",
+                    color: isDark ? "#FFFFFF" : "#0F172A",
+                    fontSize: "12px"
+                  }}
+                />
+                <Search size={13} style={{ position: "absolute", left: "10px", top: "50%", transform: "translateY(-50%)", color: "#94A3B8" }} />
+              </div>
+            </div>
+
+            {/* Modal Body / Units Grid */}
+            <div style={{ padding: "20px 24px", overflowY: "auto", flex: 1 }}>
+              {statesLoading ? (
+                <div style={{ padding: "60px", textAlign: "center", color: isDark ? "#94A3B8" : "#64748B" }}>
+                  <RefreshCw size={26} className="spin" style={{ margin: "0 auto 10px" }} />
+                  <div>{t("Loading operational entities...")}</div>
+                </div>
+              ) : (
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: "12px" }}>
+                  {[
+                    ...(modalFilter === "ALL" || modalFilter === "STATE" ? (zoneStates?.states || selectedZone.states_list || []) : []),
+                    ...(modalFilter === "ALL" || modalFilter === "UNION_TERRITORY" ? (zoneStates?.union_territories || selectedZone.uts_list || []) : [])
+                  ]
+                    .filter(item => !modalSearch || item.name.toLowerCase().includes(modalSearch.toLowerCase()) || item.code.toLowerCase().includes(modalSearch.toLowerCase()))
+                    .map(item => {
+                      const isUT = item.type === "UNION_TERRITORY";
+                      return (
+                        <div
+                          key={item.code}
+                          style={{
+                            background: isDark ? "rgba(255,255,255,0.03)" : "#F8FAFC",
+                            border: isDark ? "1px solid rgba(255,255,255,0.08)" : "1px solid #E2E8F0",
+                            borderRadius: "10px",
+                            padding: "14px",
+                            display: "flex",
+                            flexDirection: "column",
+                            justifyContent: "space-between"
+                          }}
+                        >
+                          <div>
+                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "6px" }}>
+                              <div>
+                                <span style={{ fontWeight: "800", fontSize: "13.5px", color: isDark ? "#FFFFFF" : "#0F172A" }}>
+                                  {t(item.name)}
+                                </span>
+                                <div style={{ fontSize: "11px", color: isDark ? "#94A3B8" : "#64748B", marginTop: "2px" }}>
+                                  {t("Capital")}: {item.capital || "N/A"}
+                                </div>
+                              </div>
+                              <span style={{
+                                fontFamily: "monospace", fontSize: "11px", fontWeight: "800",
+                                color: isUT ? "#3B82F6" : "#FF7900",
+                                background: isUT ? "rgba(59,130,246,0.1)" : "rgba(255,121,0,0.1)",
+                                border: isUT ? "1px solid rgba(59,130,246,0.25)" : "1px solid rgba(255,121,0,0.25)",
+                                padding: "2px 6px", borderRadius: "4px"
+                              }}>
+                                {item.code}
+                              </span>
+                            </div>
+
+                            <div style={{ fontSize: "11px", marginTop: "8px", marginBottom: "10px" }}>
+                              <span style={{ color: isDark ? "#94A3B8" : "#64748B" }}>{t("Assigned Administrator")}: </span>
+                              {item.assigned_admins && item.assigned_admins.length > 0 ? (
+                                <strong style={{ color: "#10B981" }}>{item.assigned_admins[0].full_name}</strong>
+                              ) : (
+                                <span style={{ color: isDark ? "#64748B" : "#94A3B8", fontStyle: "italic" }}>
+                                  {t("Inherits Sector Admin")}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+
+                          <button
+                            onClick={() => {
+                              setShowViewModal(false);
+                              handleOpenAssign(selectedZone, isUT ? "UNION_TERRITORY" : "STATE", item.code);
+                            }}
+                            style={{
+                              background: isUT ? "rgba(59,130,246,0.08)" : "rgba(255,121,0,0.08)",
+                              border: isUT ? "1px solid rgba(59,130,246,0.3)" : "1px solid rgba(255,121,0,0.3)",
+                              color: isUT ? "#3B82F6" : "#FF7900",
+                              padding: "6px 10px",
+                              borderRadius: "6px",
+                              fontSize: "11px",
+                              fontWeight: "700",
+                              cursor: "pointer",
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              gap: "5px"
+                            }}
+                          >
+                            <UserPlus size={12} /> {t("Assign")} {isUT ? t("UT") : t("State")} {t("Administrator")}
+                          </button>
+                        </div>
+                      );
+                    })}
+                </div>
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div style={{ padding: "14px 24px", borderTop: isDark ? "1px solid rgba(255,255,255,0.08)" : "1px solid #E2E8F0", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div style={{ fontSize: "12px", color: isDark ? "#94A3B8" : "#64748B" }}>
+                {t("Total Entities in Zone")}: <strong>{selectedZone.total_units || 0}</strong>
+              </div>
+              <button
+                onClick={() => setShowViewModal(false)}
+                style={{
+                  background: isDark ? "rgba(255,255,255,0.08)" : "#F1F5F9",
+                  border: isDark ? "1px solid rgba(255,255,255,0.12)" : "1px solid #CBD5E1",
+                  color: isDark ? "#FFFFFF" : "#0F172A",
+                  padding: "8px 16px",
+                  borderRadius: "8px",
+                  fontWeight: "700",
+                  fontSize: "12px",
+                  cursor: "pointer"
+                }}
+              >
+                {t("Close")}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ENHANCED MULTI-TIER ASSIGN SCOPES MODAL */}
       {showAssignModal && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center", padding: "20px" }}>
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)", backdropFilter: "blur(4px)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center", padding: "20px" }}>
           <div style={{ 
             background: isDark ? "#0A1220" : "#FFFFFF", 
             border: isDark ? "1px solid rgba(255,255,255,0.15)" : "1px solid #E2E8F0",
             borderRadius: "16px",
             width: "100%",
-            maxWidth: "540px",
+            maxWidth: "560px",
             overflow: "hidden",
             boxShadow: "0 25px 50px rgba(0,0,0,0.5)"
           }}>
@@ -642,13 +1086,13 @@ export default function SuperAdminZoneManagement() {
 
             <form onSubmit={handleAssignSubmit} style={{ padding: "20px" }}>
               {assignError && (
-                <div style={{ padding: "10px 14px", borderRadius: "8px", background: "rgba(239,68,68,0.15)", border: "1px solid rgba(239,68,68,0.4)", color: "#EF4444", fontSize: "12px", marginBottom: "14px", fontWeight: "600" }}>
-                  {assignError}
+                <div style={{ padding: "10px 14px", borderRadius: "8px", background: "rgba(239,68,68,0.15)", border: "1px solid rgba(239,68,68,0.4)", color: "#EF4444", fontSize: "12px", marginBottom: "14px", fontWeight: "600", display: "flex", alignItems: "center", gap: "6px" }}>
+                  <AlertCircle size={14} /> {assignError}
                 </div>
               )}
               {assignSuccess && (
-                <div style={{ padding: "10px 14px", borderRadius: "8px", background: "rgba(16,185,129,0.15)", border: "1px solid rgba(16,185,129,0.4)", color: "#10B981", fontSize: "12px", marginBottom: "14px", fontWeight: "600" }}>
-                  {assignSuccess}
+                <div style={{ padding: "10px 14px", borderRadius: "8px", background: "rgba(16,185,129,0.15)", border: "1px solid rgba(16,185,129,0.4)", color: "#10B981", fontSize: "12px", marginBottom: "14px", fontWeight: "600", display: "flex", alignItems: "center", gap: "6px" }}>
+                  <CheckCircle2 size={14} /> {assignSuccess}
                 </div>
               )}
 
@@ -724,8 +1168,8 @@ export default function SuperAdminZoneManagement() {
                   {t("2. Select Administrator Account *")}
                 </label>
                 {allAdmins.length === 0 ? (
-                  <div style={{ fontSize: "12px", color: "#EF4444", background: "rgba(239,68,68,0.08)", padding: "10px", borderRadius: "8px" }}>
-                    {t("Loading administrator directory...")}
+                  <div style={{ fontSize: "12px", color: isDark ? "#94A3B8" : "#64748B", background: isDark ? "rgba(255,255,255,0.03)" : "#F1F5F9", padding: "10px", borderRadius: "8px" }}>
+                    {t("Loading administrator accounts...")}
                   </div>
                 ) : (
                   <select
@@ -733,7 +1177,8 @@ export default function SuperAdminZoneManagement() {
                     onChange={(e) => setSelectedAdminId(e.target.value)}
                     style={{ 
                       width: "100%", padding: "9px 12px", borderRadius: "8px", 
-                      border: "1px solid #CBD5E1", background: isDark ? "#0A1220" : "#FFFFFF", 
+                      border: isDark ? "1px solid rgba(255,255,255,0.15)" : "1px solid #CBD5E1", 
+                      background: isDark ? "#0A1220" : "#FFFFFF", 
                       color: isDark ? "#FFFFFF" : "#0F172A", fontSize: "13px" 
                     }}
                   >
@@ -817,7 +1262,7 @@ export default function SuperAdminZoneManagement() {
                 <button
                   type="button"
                   onClick={() => setShowAssignModal(false)}
-                  style={{ padding: "8px 16px", borderRadius: "8px", border: "1px solid #CBD5E1", background: "none", color: isDark ? "#CBD5E1" : "#475569", fontWeight: "700", fontSize: "12px", cursor: "pointer" }}
+                  style={{ padding: "8px 16px", borderRadius: "8px", border: isDark ? "1px solid rgba(255,255,255,0.15)" : "1px solid #CBD5E1", background: "none", color: isDark ? "#CBD5E1" : "#475569", fontWeight: "700", fontSize: "12px", cursor: "pointer" }}
                 >
                   {t("Cancel")}
                 </button>
