@@ -44,6 +44,20 @@ export default function SuperAdminAccessPermissions() {
     try {
       const data = await getPermissionsMatrix();
       setMatrix(data);
+      if (data?.roles?.length > 0) {
+        if (!selectedRole || !data.roles.some(r => r.id === selectedRole)) {
+          setSelectedRole(data.roles[0].id);
+        }
+        if (!data.roles.some(r => r.id === simRole)) {
+          setSimRole(data.roles[1]?.id || data.roles[0].id);
+        }
+        if (data.resources?.length > 0 && !data.resources.includes(simResource)) {
+          setSimResource(data.resources[0]);
+        }
+        if (data.actions?.length > 0 && !data.actions.includes(simAction)) {
+          setSimAction(data.actions[0]);
+        }
+      }
     } catch (err) {
       console.error("Failed to load permissions matrix:", err);
     } finally {
@@ -53,18 +67,21 @@ export default function SuperAdminAccessPermissions() {
 
   // Run permission simulator check
   const runSimulation = () => {
-    if (!matrix) return;
-    const roleObj = matrix.roles?.find(r => r.id === simRole);
+    if (!matrix || !matrix.roles) return;
+    const roleObj = matrix.roles?.find(r => r.id === simRole) || matrix.roles?.[0];
     if (!roleObj) return;
 
-    const allowedActions = roleObj.permissions[simResource] || [];
-    const isAllowed = allowedActions.includes(simAction);
+    const resourceKey = simResource || matrix.resources?.[0] || 'kyc';
+    const actionKey = simAction || matrix.actions?.[0] || 'VIEW';
+
+    const allowedActions = roleObj.permissions?.[resourceKey] || (roleObj.permissions?.['*']?.includes('*') ? matrix?.actions || [] : []);
+    const isAllowed = allowedActions.includes(actionKey) || allowedActions.includes('*');
 
     let explanation = "";
     if (isAllowed) {
-      explanation = `Action '${simAction}' on resource '${simResource.toUpperCase()}' is AUTHORIZED for ${roleObj.title} within its bound ${roleObj.scope}.`;
+      explanation = `Action '${actionKey}' on resource '${resourceKey.toUpperCase()}' is AUTHORIZED for ${roleObj.title} within its bound ${roleObj.scope}.`;
     } else {
-      explanation = `Action '${simAction}' on resource '${simResource.toUpperCase()}' is FORBIDDEN. ${roleObj.title} lacks '${simAction}' authority on this resource tier.`;
+      explanation = `Action '${actionKey}' on resource '${resourceKey.toUpperCase()}' is FORBIDDEN. ${roleObj.title} lacks '${actionKey}' authority on this resource tier.`;
     }
 
     setSimResult({
@@ -215,7 +232,7 @@ export default function SuperAdminAccessPermissions() {
     );
   }
 
-  const activeRoleData = matrix?.roles?.find(r => r.id === selectedRole);
+  const activeRoleData = matrix?.roles?.find(r => r.id === selectedRole) || matrix?.roles?.[0];
 
   // Color mapping for actions
   const getActionColor = (act) => {
@@ -248,21 +265,43 @@ export default function SuperAdminAccessPermissions() {
       )}
 
       {/* Header */}
-      <div style={{ marginBottom: "20px" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "6px" }}>
-          <h1 style={{ fontSize: "1.75rem", fontWeight: "800", color: isDark ? "#FFFFFF" : "#0F172A", margin: 0 }}>
-            Access & Capability Policy Engine
-          </h1>
-          <span style={{ 
-            background: "rgba(168, 85, 247, 0.12)", color: "#A855F7", 
-            fontSize: "0.75rem", fontWeight: "800", padding: "3px 10px", borderRadius: "12px", border: "1px solid rgba(168, 85, 247, 0.3)"
-          }}>
-            RBAC + ABAC HIERARCHY
-          </span>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: "20px", flexWrap: "wrap", gap: "12px" }}>
+        <div>
+          <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "6px" }}>
+            <h1 style={{ fontSize: "1.75rem", fontWeight: "800", color: isDark ? "#FFFFFF" : "#0F172A", margin: 0 }}>
+              Access & Capability Policy Engine
+            </h1>
+            <span style={{ 
+              background: "rgba(168, 85, 247, 0.12)", color: "#A855F7", 
+              fontSize: "0.75rem", fontWeight: "800", padding: "3px 10px", borderRadius: "12px", border: "1px solid rgba(168, 85, 247, 0.3)"
+            }}>
+              RBAC + ABAC HIERARCHY
+            </span>
+          </div>
+          <p style={{ margin: 0, color: isDark ? "#94A3B8" : "#64748B", fontSize: "0.88rem" }}>
+            Authoritative mapping of Administrative Roles → Geographic Scopes → System Resources → Permitted Operations
+          </p>
         </div>
-        <p style={{ margin: 0, color: isDark ? "#94A3B8" : "#64748B", fontSize: "0.88rem" }}>
-          Authoritative mapping of Administrative Roles → Geographic Scopes → System Resources → Permitted Operations
-        </p>
+
+        <button
+          onClick={loadPermissions}
+          disabled={loading}
+          style={{
+            background: isDark ? "rgba(255,255,255,0.05)" : "#F1F5F9",
+            border: isDark ? "1px solid rgba(255,255,255,0.15)" : "1px solid #CBD5E1",
+            color: isDark ? "#E2E8F0" : "#334155",
+            padding: "9px 16px",
+            borderRadius: "8px",
+            fontWeight: "700",
+            fontSize: "12.5px",
+            cursor: loading ? "not-allowed" : "pointer",
+            display: "flex",
+            alignItems: "center",
+            gap: "6px"
+          }}
+        >
+          <RefreshCw size={14} className={loading ? "spin" : ""} /> Refresh Policy
+        </button>
       </div>
 
       {/* Downward Scope Inheritance Banner */}
